@@ -1,0 +1,21 @@
+# Entornos
+.venv/
+.env/
+.conda/
+# Artefactos/volatiles
+spool/
+corpus/
+raw/
+out/
+logs/
+reports/
+features/
+state/
+__pycache__/
+*.py[cod]
+*.zst
+*.jsonl
+*.pdf
+# IDE
+.vscode/
+.idea/

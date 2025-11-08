@@ -1,0 +1,23 @@
+name: cienciamx
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pyyaml
+  - requests
+  - lxml
+  - tenacity
+  - rapidfuzz
+  - spacy
+  - tqdm
+  # Herramientas de calidad
+  - pre-commit
+  - black
+  - ruff
+  # Paquetes de pip
+  - pip:
+    - sickle==0.7.0
+    - python-dotenv
+    - yake
