@@ -217,9 +217,16 @@ def main():
                         if isinstance(y, int):
                             doc["year_i"] = y
 
-            out.write(json.dumps(doc, ensure_ascii=False) + "\n")
-            # Sanea opcionales: si están en None, elimínalos
-            for k in (
+            # --- Saneamiento de opcionales y normalización antes de volcar ---
+            # year_i: forzar a int si viene como texto; si falla, eliminar
+            if "year_i" in doc:
+                try:
+                    doc["year_i"] = int(doc["year_i"])
+                except (TypeError, ValueError):
+                    doc.pop("year_i", None)
+
+            # Quitar opcionales nulos, vacíos o listas vacías
+            optional_keys = {
                 "url_s",
                 "year_i",
                 "doi_s",
@@ -228,9 +235,24 @@ def main():
                 "places_ss",
                 "keyphrases_ss",
                 "text_t",
-            ):
-                if k in doc and doc[k] is None:
-                    del doc[k]
+            }
+            for _k in list(doc.keys()):
+                if _k not in optional_keys:
+                    continue
+                _v = doc[_k]
+                if _v is None:
+                    doc.pop(_k, None)
+                elif isinstance(_v, str) and not _v.strip():
+                    doc.pop(_k, None)
+                elif isinstance(_v, list) and len(_v) == 0:
+                    doc.pop(_k, None)
+
+            # Deduplicar / normalizar keyphrases_ss
+            if "keyphrases_ss" in doc and isinstance(doc["keyphrases_ss"], list):
+                doc["keyphrases_ss"] = [
+                    s for s in {str(x).strip() for x in doc["keyphrases_ss"]} if s
+                ]
+
             out.write(json.dumps(doc, ensure_ascii=False) + "\n")
             count += 1
 
