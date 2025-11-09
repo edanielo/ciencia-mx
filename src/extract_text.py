@@ -36,6 +36,8 @@ from typing import Any, Dict, Iterable, Optional, Tuple
 import requests
 import yaml
 
+from tenacity import retry, stop_after_attempt, wait_exponential
+
 # --- Rutas del proyecto ---
 SPOOL = Path("spool/bin")
 LOGS = Path("logs")
@@ -243,10 +245,14 @@ def main() -> None:
     out_dir = ensure_dirs(args.ri)
     fetch_idx = load_fetch_log()
 
-    # Sanity check Tika
-    try:
-        r = requests.get(args.tika.rstrip("/") + "/version", timeout=5)
+    # Sanity check Tika con reintentos exponenciales
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=1, max=8))
+    def _ping_tika(url: str) -> None:
+        r = requests.get(url.rstrip("/") + "/version", timeout=5)
         r.raise_for_status()
+
+    try:
+        _ping_tika(args.tika)
     except Exception as e:
         print(
             f"[extract] ERROR: Tika no responde en {args.tika} → {e}", file=sys.stderr
