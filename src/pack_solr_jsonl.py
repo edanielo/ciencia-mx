@@ -60,23 +60,32 @@ def main():
                         Path(tpath).read_text(encoding="utf-8", errors="ignore")
                     )
 
+            # Campos requeridos
             doc = {
                 "id": sha,
                 "ri_s": r.get("ri"),
                 "sha256_s": sha,
-                "url_s": r.get("source_url"),
                 "ocr_b": bool(r.get("ocr_applied")),
                 "tokens_i": int(r.get("metrics", {}).get("tokens", 0)),
                 "alpha_ratio_f": float(r.get("metrics", {}).get("alpha_ratio", 0.0)),
                 "score_f": float(r.get("metrics", {}).get("text_quality_score", 0.0)),
-                "year_i": r.get("year_guess"),
-                "doi_s": r.get("doi_guess"),
                 "persons_ss": r.get("persons") or [],
                 "orgs_ss": r.get("orgs") or [],
                 "places_ss": r.get("places") or [],
                 "keyphrases_ss": r.get("keyphrases") or [],
                 "text_path_s": r.get("text_path"),
             }
+
+            # Opcionales: añade solo si traen valor válido
+            url = r.get("source_url")
+            if isinstance(url, str) and url.strip():
+                doc["url_s"] = url
+            year = r.get("year_guess")
+            if isinstance(year, int):
+                doc["year_i"] = year
+            doi = r.get("doi_guess")
+            if isinstance(doi, str) and doi.strip():
+                doc["doi_s"] = doi
             if args.include_text and text:
                 doc["text_t"] = text
 
