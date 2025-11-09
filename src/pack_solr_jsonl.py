@@ -218,6 +218,20 @@ def main():
                             doc["year_i"] = y
 
             out.write(json.dumps(doc, ensure_ascii=False) + "\n")
+            # Sanea opcionales: si están en None, elimínalos
+            for k in (
+                "url_s",
+                "year_i",
+                "doi_s",
+                "persons_ss",
+                "orgs_ss",
+                "places_ss",
+                "keyphrases_ss",
+                "text_t",
+            ):
+                if k in doc and doc[k] is None:
+                    del doc[k]
+            out.write(json.dumps(doc, ensure_ascii=False) + "\n")
             count += 1
 
     print(f"[pack] Listo. Docs empaquetados: {count}. Salida: {outpath}")
