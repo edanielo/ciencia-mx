@@ -11,9 +11,12 @@ from datetime import datetime
 OUT = Path("out/solr")
 CORPUS_RAW = Path("corpus/raw")
 
-REQUIRED = {
+ALWAYS = {
     "id": str,
     "ri_s": str,
+    "has_bitstream_b": bool,
+}
+REQ_IF_BITSTREAM = {
     "sha256_s": str,
     "ocr_b": bool,
     "tokens_i": int,
@@ -35,6 +38,10 @@ OPTIONAL = {
 SCHEMA_CONTRACT = {
     "id": {"type": "string", "desc": "sha256 del documento"},
     "ri_s": {"type": "string", "desc": "nombre del RI de origen"},
+    "has_bitstream_b": {
+        "type": "boolean",
+        "desc": "True si hay bitstream/texto; False si es solo metadatos",
+    },
     "sha256_s": {"type": "string", "desc": "sha256 del binario/texto"},
     "url_s": {"type": "string?", "desc": "URL fuente si disponible"},
     "ocr_b": {"type": "boolean", "desc": "si se aplicó OCR"},
@@ -78,8 +85,8 @@ def sha256_file(p: Path) -> str:
 
 def validate_doc(d: dict, check_text_path: bool) -> list[str]:
     errs = []
-    # Required types
-    for k, tp in REQUIRED.items():
+    # Siempre-obligatorios
+    for k, tp in ALWAYS.items():
         if k not in d:
             errs.append(f"missing {k}")
             continue
@@ -96,6 +103,26 @@ def validate_doc(d: dict, check_text_path: bool) -> list[str]:
         else:  # tuple
             if not isinstance(v, tp):
                 errs.append(f"type {k} expected {tp} got {type(v).__name__}")
+
+    # Obligatorios si hay bitstream/texto
+    if d.get("has_bitstream_b") is True:
+        for k, tp in REQ_IF_BITSTREAM.items():
+            if k not in d:
+                errs.append(f"missing {k}")
+                continue
+            v = d[k]
+            if tp is int:
+                if not isinstance(v, int):
+                    errs.append(f"type {k} expected int got {type(v).__name__}")
+            elif tp is bool:
+                if not isinstance(v, bool):
+                    errs.append(f"type {k} expected bool got {type(v).__name__}")
+            elif tp is str:
+                if not isinstance(v, str):
+                    errs.append(f"type {k} expected str got {type(v).__name__}")
+            else:  # tuple
+                if not isinstance(v, tp):
+                    errs.append(f"type {k} expected {tp} got {type(v).__name__}")
     # Optional basic checks
     for k, tp in OPTIONAL.items():
         if k in d and not isinstance(d[k], tp):

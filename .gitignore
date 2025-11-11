@@ -19,3 +19,7 @@ __pycache__/
 # IDE
 .vscode/
 .idea/
+# Plataform specific
+scripts/
+# NLP
+nlp/

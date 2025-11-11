@@ -6,6 +6,7 @@ repos:
     concurrency_per_host: 2
     max_bytes_pdf: 30000000
     allowed_mime:
-      - application/pdf
-      - application/vnd.openxmlformats-officedocument.wordprocessingml.document
+      - application/pdf                                                           # pdf
+      - application/vnd.openxmlformats-officedocument.wordprocessingml.document   # word
+      - application/vnd.openxmlformats-officedocument.presentationml.presentation # .pptx
       - text/plain
