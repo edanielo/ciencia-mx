@@ -220,7 +220,7 @@ def sniff_is_pdf(resp: requests.Response, max_peek: int = 8192) -> Tuple[bool, b
     """Lee algunos KB y detecta firma PDF (%PDF-)."""
     blob = b""
     try:
-        for chunk in resp.iter_content(8192):
+        for chunk in resp.iter_content(8192, decode_unicode=False):
             if not chunk:
                 break
             blob += chunk
@@ -234,26 +234,57 @@ def sniff_is_pdf(resp: requests.Response, max_peek: int = 8192) -> Tuple[bool, b
 def scrape_pdf_link(session: requests.Session, url: str) -> Optional[str]:
     """
     Si llegamos a una landing HTML, intenta encontrar el primer enlace PDF/bitstream.
-    Útil para DSpace/OJS (links con .pdf o /bitstream/ en href).
+    Cobertura ampliada para DSpace/OJS:
+      - <meta name="citation_pdf_url" content="...">
+      - <a class="...pdf...">, <a> con texto 'PDF'
+      - href con '.pdf', '/bitstream/', 'galley', 'download?filename=' o '?isAllowed=y'
     """
     try:
         r = session.get(url, timeout=30, allow_redirects=True)
         r.raise_for_status()
         doc = html.fromstring(r.content)
+
+        # 1) Meta etiqueta estándar (muy fiable en OJS)
+        metas = doc.xpath(
+            "//meta[translate(@name,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')='citation_pdf_url']/@content"
+        )
+
+        # 2) Anchors candidatos (clases, texto visible, extensiones y patrones)
         hrefs = [h.strip() for h in doc.xpath("//a/@href") if h and h.strip()]
+        # anchors con texto "PDF"
+        txt_pdf = doc.xpath(
+            "//a[contains(translate(normalize-space(string(.)),'pdf','PDF'),'PDF')]/@href"
+        )
+        # anchors con clases típicas de OJS/galley
+        cls_pdf = doc.xpath(
+            "//a[contains(translate(@class,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),'pdf')]/@href"
+        )
+
         cands: List[str] = []
-        for h in hrefs:
-            low = h.lower()
-            if ".pdf" in low or "/bitstream/" in low:
-                cands.append(h)
+        cands.extend(metas)
+        cands.extend(txt_pdf)
+        cands.extend(cls_pdf)
+        cands.extend(hrefs)  # se filtrarán por patrones abajo
+
         if not cands:
             return None
+
         from urllib.parse import urljoin
 
-        for c in cands:
-            cand = urljoin(r.url, c)
+        seen = set()
+        for h in cands:
+            if not h or h in seen:
+                continue
+            seen.add(h)
+            cand = urljoin(r.url, h)
             low = cand.lower()
-            if low.endswith(".pdf") or "/bitstream/" in low:
+            if (
+                low.endswith(".pdf")
+                or "/bitstream/" in low
+                or "galley" in low
+                or "download?filename=" in low
+                or "isallowed=y" in low
+            ):
                 return cand
     except Exception:
         return None
@@ -359,6 +390,75 @@ def main() -> None:
                 except Exception:
                     ctype = ""
 
+                # 1.a) Si el HEAD dice HTML y HTML NO está permitido → intentar scrapear PDF sin sniff.
+                is_head_html = ctype.startswith("text/html")
+                if is_head_html and not is_allowed_mime(ctype, url, allowed):
+                    pdf_link = scrape_pdf_link(session, url)
+                    if pdf_link:
+                        # HEAD del PDF candidato
+                        try:
+                            h2 = head(session, pdf_link)
+                            ctype2 = (
+                                ((h2.headers.get("Content-Type") or ""))
+                                .split(";")[0]
+                                .strip()
+                                .lower()
+                            )
+                        except Exception:
+                            ctype2 = ""
+                        allowed_pdf = any(
+                            a.startswith("application/pdf") for a in allowed
+                        )
+                        # Si no convence por HEAD, probamos GET + sniff PDF
+                        if (
+                            not is_allowed_mime(ctype2, pdf_link, allowed)
+                            and allowed_pdf
+                        ):
+                            resp2 = get_stream(session, pdf_link)
+                            ok_pdf, _peek = sniff_is_pdf(resp2)
+                            resp2.close()
+                            if ok_pdf:
+                                ctype2 = "application/pdf"
+                        if is_allowed_mime(ctype2, pdf_link, allowed):
+                            res = download_stream(session, pdf_link, max_bytes)
+                            if res["sha256"] in seen_hashes:
+                                Path(res["path"]).unlink(missing_ok=True)
+                                log(
+                                    flog,
+                                    ri=origin["name"],
+                                    source=str(x),
+                                    url=pdf_link,
+                                    sha256=res["sha256"],
+                                    status="duplicate",
+                                )
+                            else:
+                                seen_hashes.add(res["sha256"])
+                                log(
+                                    flog,
+                                    ri=origin["name"],
+                                    source=str(x),
+                                    url=pdf_link,
+                                    **res,
+                                    status="ok",
+                                )
+                                picked += 1
+                                success = True
+                                print(
+                                    f"[fetch] {picked:04d} {res['content_type'] or '?'} {res['bytes']}B → {res['path']}"
+                                )
+                            break
+                        else:
+                            # Landing detectada pero sin enlace PDF utilizable
+                            log(
+                                flog,
+                                ri=origin["name"],
+                                source=str(x),
+                                url=url,
+                                status="skipped",
+                                reason="html_landing_no_pdf",
+                            )
+                            break
+
                 if is_allowed_mime(ctype, url, allowed):
                     res = download_stream(session, url, max_bytes)
                     if res["sha256"] in seen_hashes:
@@ -421,25 +521,47 @@ def main() -> None:
                         )
                     break
 
-                # 3) Si es HTML (landing), intenta raspar un PDF/bitstream
-                is_html = "text/html" in (ctype or "") or (
-                    resp.headers.get("Content-Type", "").lower().startswith("text/html")
-                )
-                resp.close()
-                if is_html:
+                # (La rama de scraping por HEAD ya cubre landings HTML;
+                #  esta parte se queda para casos donde el GET resultó HTML sin avisar por HEAD)
+                try:
+                    is_html_get = (
+                        resp.headers.get("Content-Type", "")
+                        .lower()
+                        .startswith("text/html")
+                    )
+                except Exception:
+                    is_html_get = False
+                finally:
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+                if is_html_get:
                     pdf_link = scrape_pdf_link(session, url)
                     if pdf_link:
-                        # valida por HEAD
+                        # (Se reutiliza la misma lógica de HEAD/GET + download que arriba)
                         try:
                             h2 = head(session, pdf_link)
                             ctype2 = (
-                                (h2.headers.get("Content-Type") or "")
+                                ((h2.headers.get("Content-Type") or ""))
                                 .split(";")[0]
                                 .strip()
                                 .lower()
                             )
                         except Exception:
                             ctype2 = ""
+                        allowed_pdf = any(
+                            a.startswith("application/pdf") for a in allowed
+                        )
+                        if (
+                            not is_allowed_mime(ctype2, pdf_link, allowed)
+                            and allowed_pdf
+                        ):
+                            resp2 = get_stream(session, pdf_link)
+                            ok_pdf, _peek = sniff_is_pdf(resp2)
+                            resp2.close()
+                            if ok_pdf:
+                                ctype2 = "application/pdf"
                         if is_allowed_mime(ctype2, pdf_link, allowed):
                             res = download_stream(session, pdf_link, max_bytes)
                             if res["sha256"] in seen_hashes:
@@ -467,6 +589,16 @@ def main() -> None:
                                 print(
                                     f"[fetch] {picked:04d} {res['content_type'] or '?'} {res['bytes']}B → {res['path']}"
                                 )
+                            break
+                        else:
+                            log(
+                                flog,
+                                ri=origin["name"],
+                                source=str(x),
+                                url=url,
+                                status="skipped",
+                                reason="html_landing_no_pdf",
+                            )
                             break
 
                 # Nada funcionó para este URL
