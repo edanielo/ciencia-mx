@@ -176,12 +176,31 @@ def unique_path(path: Path) -> Path:
 
 # ---------------------- Red de requests y detección de tipos ----------------------
 def is_allowed_mime(ctype: str, url: str, allowed: set[str]) -> bool:
+    """
+    Acepta si:
+      1) El Content-Type normalizado está en la allowlist (prefijo),
+      2) O por *fallback* de extensión (.pdf/.docx/.pptx/.html/.htm/.jpg/.jpeg/.png)
+         cuando el servidor miente el MIME (p. ej. octet-stream).
+    """
     c = (ctype or "").split(";")[0].strip().lower()
     if any(c.startswith(m) for m in allowed):
         return True
     # Fallback por extensión de URL
     low = url.lower().rsplit("?", 1)[0].rsplit("#", 1)[0]
-    if low.endswith(".pdf") and any(a.startswith("application/pdf") for a in allowed):
+    _, ext = os.path.splitext(low)
+    ext = ext.lower()
+    EXT_TO_MIME = {
+        ".pdf": "application/pdf",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".html": "text/html",
+        ".htm": "text/html",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }
+    m = EXT_TO_MIME.get(ext)
+    if m and any(a.startswith(m) for a in allowed):
         return True
     return False
 
@@ -253,7 +272,7 @@ def download_stream(
     resp.raise_for_status()
 
     SPOOL.mkdir(parents=True, exist_ok=True)
-    ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip()
+    ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
     name = build_spool_name(resp.url, ctype, resp.headers)
     path = unique_path(SPOOL / name)
 
@@ -331,7 +350,12 @@ def main() -> None:
                 # 1) HEAD: ¿Content-Type permitido?
                 try:
                     h = head(session, url)
-                    ctype = (h.headers.get("Content-Type") or "").split(";")[0].strip()
+                    ctype = (
+                        (h.headers.get("Content-Type") or "")
+                        .split(";")[0]
+                        .strip()
+                        .lower()
+                    )
                 except Exception:
                     ctype = ""
 
@@ -399,7 +423,7 @@ def main() -> None:
 
                 # 3) Si es HTML (landing), intenta raspar un PDF/bitstream
                 is_html = "text/html" in (ctype or "") or (
-                    resp.headers.get("Content-Type", "").startswith("text/html")
+                    resp.headers.get("Content-Type", "").lower().startswith("text/html")
                 )
                 resp.close()
                 if is_html:
@@ -412,6 +436,7 @@ def main() -> None:
                                 (h2.headers.get("Content-Type") or "")
                                 .split(";")[0]
                                 .strip()
+                                .lower()
                             )
                         except Exception:
                             ctype2 = ""

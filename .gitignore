@@ -21,3 +21,5 @@ __pycache__/
 .idea/
 # Plataform specific
 scripts/
+# NLP
+nlp/
