@@ -8,6 +8,8 @@ Salida: out/solr/<RI>/docs.jsonl
 from __future__ import annotations
 import argparse
 import json
+import re
+from datetime import datetime
 from pathlib import Path
 
 CLEAN = Path("corpus/clean")
@@ -85,6 +87,29 @@ def load_dc_index(ri: str) -> dict[str, dict]:
     return idx
 
 
+def coerce_year(v) -> int | None:
+    """
+    Convierte ints o strings (p.ej. '2015', '2015-06-01') a un año válido.
+    Descarta sentinelas como 0, 9999, 2099 o años fuera de rango razonable.
+    """
+    year: int | None = None
+    if isinstance(v, int):
+        year = v
+    elif isinstance(v, str):
+        m = re.search(r"\b(1[5-9]\d{2}|20\d{2})\b", v)  # 1500–2099
+        if m:
+            year = int(m.group(0))
+    if year is None:
+        return None
+    current_year = datetime.now().year
+    if year < 1500 or year > current_year:
+        return None
+    # Sentinelas típicos que a veces aparecen en metadatos
+    if year in (0, 9999, 2099):
+        return None
+    return year
+
+
 def main():
     ap = argparse.ArgumentParser(description="Empaquetado JSONL para Solr")
     ap.add_argument("--ri", required=True)
@@ -152,9 +177,9 @@ def main():
                 url = r.get("source_url")
                 if isinstance(url, str) and url.strip():
                     doc["url_s"] = url
-                year = r.get("year_guess")
-                if isinstance(year, int):
-                    doc["year_i"] = year
+                y = coerce_year(r.get("year_guess"))
+                if y is not None:
+                    doc["year_i"] = y
                 doi = r.get("doi_guess")
                 if isinstance(doi, str) and doi.strip():
                     doc["doi_s"] = doi
@@ -222,16 +247,23 @@ def main():
                 if isinstance(doi_dc, str) and doi_dc.strip():
                     doc["doi_s"] = doi_dc
             if "year_i" not in doc:
-                y = dc.get("year_guess")
-                if isinstance(y, int):
+                y = coerce_year(dc.get("year_guess"))
+                if y is not None:
                     doc["year_i"] = y
 
             # --- Saneamiento y normalización (igual que ya hacías) ---
             if "year_i" in doc:
                 try:
-                    doc["year_i"] = int(doc["year_i"])
+                    yi = int(doc["year_i"])
                 except (TypeError, ValueError):
                     doc.pop("year_i", None)
+                else:
+                    current_year = datetime.now().year
+                    # Rango razonable; descarta sentinelas (p.ej. 2099) o años imposibles
+                    if yi < 1500 or yi > current_year:
+                        doc.pop("year_i", None)
+                    else:
+                        doc["year_i"] = yi
             optional_keys = {
                 "url_s",
                 "year_i",

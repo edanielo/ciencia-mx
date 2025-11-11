@@ -128,7 +128,7 @@ def validate_doc(d: dict, check_text_path: bool) -> list[str]:
         if k in d and not isinstance(d[k], tp):
             errs.append(f"type {k} expected {tp} got {type(d[k]).__name__}")
     # text_path exists?
-    if check_text_path and "text_path_s" in d:
+    if check_text_path and d.get("has_bitstream_b") is True and "text_path_s" in d:
         if not Path(d["text_path_s"]).exists():
             errs.append(f"text_path_s not found: {d['text_path_s']}")
     return errs
